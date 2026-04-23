@@ -5,12 +5,11 @@
 
 // ================= USER CONFIG =================
 
-// number of LED channels
 #ifndef CANDLE_CHANNELS
 #define CANDLE_CHANNELS 3
 #endif
 
-// user MUST implement this
+// YOU must implement this in your main sketch
 void hw_set_led(uint8_t ch, uint8_t value);
 
 // ================= INTERNAL STATE =================
@@ -18,6 +17,10 @@ void hw_set_led(uint8_t ch, uint8_t value);
 static uint16_t candle_lfsr = 0xBEEF;
 static uint8_t candle_t = 0;
 static uint8_t candle_ember = 40;
+
+// smoothed flame states (NEW)
+static uint8_t flame1_s = 0;
+static uint8_t flame2_s = 0;
 
 #define CANDLE_NOISE_SIZE 32
 static uint8_t candle_noise[CANDLE_NOISE_SIZE];
@@ -74,8 +77,11 @@ static inline void candle_update(void) {
 
     candle_t++;
 
-    uint8_t base = candle_noise1d(candle_t >> 2);
-    uint8_t mid  = candle_noise1d(candle_t >> 1);
+    // desynchronized noise sampling
+    uint8_t base = candle_noise1d((candle_t + 0)  >> 3);
+    uint8_t mid  = candle_noise1d((candle_t + 37) >> 2);
+    uint8_t var  = candle_noise1d((candle_t + 83) >> 3);
+
     uint8_t high = candle_rand8() & 0x0F;
 
     int16_t flame = (base * 3 + mid * 2 + high) / 6;
@@ -84,13 +90,24 @@ static inline void candle_update(void) {
     if (flame > 255) flame = 255;
 
     uint8_t flame1 = flame;
-    uint8_t flame2 = flame - (candle_noise1d(candle_t >> 3) >> 3);
+    uint8_t flame2 = flame - (var >> 2);
 
+    // occasional random flare
+    if ((candle_rand8() & 0x1F) == 0) {
+        flame1 += 20;
+        if (flame1 > 255) flame1 = 255;
+    }
+
+    // smooth flames (reduces jitter)
+    flame1_s = candle_smooth(flame1_s, flame1, 6);
+    flame2_s = candle_smooth(flame2_s, flame2, 8);
+
+    // ember (slow glow)
     candle_ember = candle_smooth(candle_ember, 30 + (base >> 1), 20);
 
     // output
-    hw_set_led(0, candle_gamma8[flame1]);
-    hw_set_led(1, candle_gamma8[flame2]);
+    hw_set_led(0, candle_gamma8[flame1_s]);
+    hw_set_led(1, candle_gamma8[flame2_s]);
     hw_set_led(2, candle_gamma8[candle_ember]);
 }
 
