@@ -154,12 +154,6 @@ To get the best realism:
 
 ---
 
-## 📄 License
-
-MIT License — free to use, modify, and share.
-
----
-
 ## 🙌 Credits / Inspiration
 
 Inspired by:
@@ -180,3 +174,13 @@ It does **not** produce heat or fire.
 ## ⭐ If you like it
 
 Consider starring the repo or extending it—there’s a lot of room to push this even further into physical simulation territory.
+
+
+
+## Follow up ideas:
+* 2D flame column simulation (tiny grid)
+* heat diffusion model (Navier-Stokes-lite approximation)
+* camera-like response curve (film emulation)
+* multiple interacting candles (shared air field)
+
+That’s where it stops being an LED effect and starts being a procedural fire simulator on a microcontroller.
