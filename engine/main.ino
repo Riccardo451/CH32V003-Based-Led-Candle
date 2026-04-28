@@ -3,7 +3,13 @@
 #include <Arduino.h>
 #include "candle.h"
 
-// choose 3 PWM-capable pins
+/* choose 3 PWM-capable pins
+  Pin	Function	LED Type
+  PD2 -> 3	Flame Core	Warm white
+  PD3 -> 5	Flame Edge	Amber / warm
+  PD4 -> 6	Ember Base	Red / orange
+*/
+
 const uint8_t pins[3] = {3, 5, 6};
 
 // required by candle.h
@@ -12,17 +18,15 @@ analogWrite(pins[ch], value);
 }
 
 void setup() {
+
 for (int i = 0; i < 3; i++) {
-pinMode(pins[i], OUTPUT);
-}
+  pinMode(pins[i], OUTPUT);
+  }
 
-```
 candle_init();
-```
-
 }
 
 void loop() {
 candle_update();
-delay(5); // ~200 Hz update rate
+delay(25); // update rate
 }
