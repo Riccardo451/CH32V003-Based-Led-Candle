@@ -1,13 +1,34 @@
 #ifndef CANDLE_H
 #define CANDLE_H
 
-#include <stdint.h>
+// ===== DEFAULT CONFIG (MUST BE FIRST) =====
+#ifndef CPU_IS_POWERFUL
+#define CPU_IS_POWERFUL 0
+#endif
 
-// ================= USER CONFIG =================
+#ifndef CANDLE_USE_GAMMA
+#define CANDLE_USE_GAMMA 1
+#endif
+
+#ifndef CANDLE_USE_COMPRESSION
+#define CANDLE_USE_COMPRESSION 1
+#endif
+
+#ifndef CANDLE_FLOOR
+#define CANDLE_FLOOR 10
+#endif
+
+#ifndef CANDLE_UPDATE_INT
+#define CANDLE_UPDATE_INT 3
+#endif
 
 #ifndef CANDLE_CHANNELS
 #define CANDLE_CHANNELS 3
 #endif
+
+#include <stdint.h>
+
+// ===============================================
 
 // YOU must implement this in your main sketch
 void hw_set_led(uint8_t ch, uint8_t value);
@@ -18,29 +39,36 @@ static uint16_t candle_lfsr = 0xBEEF;
 static uint8_t candle_t = 0;
 static uint8_t candle_ember = 40;
 
-// smoothed flame states (NEW)
+// smoothed flame states
 static uint8_t flame1_s = 0;
 static uint8_t flame2_s = 0;
 
 #define CANDLE_NOISE_SIZE 32
 static uint8_t candle_noise[CANDLE_NOISE_SIZE];
 
-// ================= GAMMA =================
-static const uint8_t candle_gamma8[256] = {
-  0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,
-  2,2,2,2,3,3,3,4,4,4,5,5,6,6,7,7,
-  8,8,9,10,10,11,12,13,13,14,15,16,
-  17,18,19,20,21,22,23,24,25,27,28,29,
-  30,32,33,35,36,38,39,41,42,44,46,48,
-  49,51,53,55,57,59,61,63,65,67,69,71,
-  73,76,78,80,83,85,87,90,92,95,97,100,
-  103,105,108,111,113,116,119,122,125,128,131,134,
-  137,140,143,146,149,152,155,159,162,165,168,172,
-  175,178,182,185,189,192,196,199,203,207,210,214,
-  218,221,225,229,233,237,240,244,248,252,255
-};
 
+// ================= GAMMA =================
+
+#include <math.h>
+
+#if CPU_IS_POWERFUL
+    // Float calculation for STM32, ESP32 etc 
+    static inline uint8_t candle_gamma(uint8_t x) {
+        float normalized = x / 255.0f;
+        float corrected = powf(normalized, 2.2f);  // gamma 2.2
+        return (uint8_t)(corrected * 255.0f + 0.5f);
+    }
+#else
+    // Integer approximation for slow CPU ex Atmega328
+    static inline uint8_t candle_gamma(uint8_t x) {
+        uint16_t y = x;
+        y = (y * y) >> 8;       // approx gamma ~2.0
+        y = (y * x) >> 8;       // pushes toward ~2.2
+        return (uint8_t)y;
+    }
+#endif
 // ================= RNG =================
+
 static inline uint8_t candle_rand8(void) {
     candle_lfsr ^= candle_lfsr << 7;
     candle_lfsr ^= candle_lfsr >> 9;
@@ -49,6 +77,7 @@ static inline uint8_t candle_rand8(void) {
 }
 
 // ================= NOISE =================
+
 static inline uint8_t candle_lerp(uint8_t a, uint8_t b, uint8_t t) {
     return a + ((b - a) * t >> 8);
 }
@@ -61,11 +90,18 @@ static inline uint8_t candle_noise1d(uint8_t x) {
 }
 
 // ================= HELPERS =================
+
 static inline uint8_t candle_smooth(uint8_t v, uint8_t target, uint8_t k) {
     return v + ((int16_t)target - v) / k;
 }
 
+// compression: lifts low values instead of hard clipping
+static inline uint8_t candle_lift(uint8_t v) {
+    return CANDLE_FLOOR + ((uint16_t)v * (255 - CANDLE_FLOOR) >> 8);
+}
+
 // ================= INIT =================
+
 static inline void candle_init(void) {
     for (uint8_t i = 0; i < CANDLE_NOISE_SIZE; i++) {
         candle_noise[i] = candle_rand8();
@@ -73,9 +109,15 @@ static inline void candle_init(void) {
 }
 
 // ================= UPDATE =================
+
+static uint8_t candle_sub = 0;
+
 static inline void candle_update(void) {
 
+    if (++candle_sub >= CANDLE_UPDATE_INT) {   // increase 3 → slower (e.g. 4, 5...)
+    candle_sub = 0;
     candle_t++;
+}
 
     // desynchronized noise sampling
     uint8_t base = candle_noise1d((candle_t + 0)  >> 3);
@@ -86,7 +128,7 @@ static inline void candle_update(void) {
 
     int16_t flame = (base * 3 + mid * 2 + high) / 6;
 
-    if (flame < 20) flame = 20;
+    if (flame < 10) flame = 10;
     if (flame > 255) flame = 255;
 
     uint8_t flame1 = flame;
@@ -98,17 +140,36 @@ static inline void candle_update(void) {
         if (flame1 > 255) flame1 = 255;
     }
 
-    // smooth flames (reduces jitter)
-    flame1_s = candle_smooth(flame1_s, flame1, 6);
-    flame2_s = candle_smooth(flame2_s, flame2, 8);
+    // smooth flames
+    flame1_s = candle_smooth(flame1_s, flame1, 8);
+    flame2_s = candle_smooth(flame2_s, flame2, 10);
 
     // ember (slow glow)
     candle_ember = candle_smooth(candle_ember, 30 + (base >> 1), 20);
 
-    // output
-    hw_set_led(0, candle_gamma8[flame1_s]);
-    hw_set_led(1, candle_gamma8[flame2_s]);
-    hw_set_led(2, candle_gamma8[candle_ember]);
+
+// --- compression stage ---
+#if CANDLE_USE_COMPRESSION
+    uint8_t out1 = candle_lift(flame1_s);
+    uint8_t out2 = candle_lift(flame2_s);
+    uint8_t out3 = candle_lift(candle_ember);
+#else
+    uint8_t out1 = flame1_s;
+    uint8_t out2 = flame2_s;
+    uint8_t out3 = candle_ember;
+#endif
+
+// --- gamma stage ---
+#if CANDLE_USE_GAMMA
+    out1 = candle_gamma(out1);
+    out2 = candle_gamma(out2);
+    out3 = candle_gamma(out3);
+#endif
+
+// --- final output ---
+hw_set_led(0, out1);
+hw_set_led(1, out2);
+hw_set_led(2, out3);
 }
 
 #endif
